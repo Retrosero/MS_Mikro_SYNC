@@ -1,0 +1,172 @@
+import { useState, useEffect } from 'react';
+import type { Company } from '../types';
+import { format } from 'date-fns';
+
+export default function Companies() {
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [formData, setFormData] = useState({
+    Name: '',
+    Code: '',
+    Email: '',
+    Phone: '',
+    Address: '',
+    ContactPerson: ''
+  });
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    fetchCompanies();
+  }, []);
+
+  const fetchCompanies = async () => {
+    try {
+      const token = localStorage.getItem('adminToken');
+      const res = await fetch('/api/companies', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCompanies(data);
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      const token = localStorage.getItem('adminToken');
+      const res = await fetch('/api/companies', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(formData)
+      });
+      if (res.ok) {
+        setIsModalOpen(false);
+        setFormData({ Name: '', Code: '', Email: '', Phone: '', Address: '', ContactPerson: '' });
+        fetchCompanies();
+      } else {
+        const err = await res.json();
+        alert('Hata: ' + (err.error || 'Şirket eklenemedi'));
+      }
+    } catch (error) {
+      alert('Sunucu bağlantı hatası');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4 h-full">
+      <div className="flex items-center justify-end">
+        <button 
+          onClick={() => setIsModalOpen(true)}
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition-all"
+        >
+          Yeni Şirket Ekle
+        </button>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col min-h-0 flex-1 overflow-hidden">
+        <div className="overflow-auto flex-1">
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-slate-50 sticky top-0">
+              <tr>
+                <th className="px-6 py-3 text-xs font-semibold text-slate-500 uppercase">Firma Kodu</th>
+                <th className="px-6 py-3 text-xs font-semibold text-slate-500 uppercase">Firma Adı</th>
+                <th className="px-6 py-3 text-xs font-semibold text-slate-500 uppercase">İletişim</th>
+                <th className="px-6 py-3 text-xs font-semibold text-slate-500 uppercase">Kayıt Tarihi</th>
+                <th className="px-6 py-3 text-xs font-semibold text-slate-500 uppercase">Durum</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {loading ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-8 text-center text-slate-500">Yükleniyor...</td>
+                </tr>
+              ) : companies.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-8 text-center text-slate-500">Kayıt bulunamadı.</td>
+                </tr>
+              ) : (
+                companies.map((company) => (
+                  <tr key={company.Id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-6 py-4">
+                      <span className="font-mono text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded">
+                        {company.Code}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-sm font-medium text-slate-900">{company.Name}</td>
+                    <td className="px-6 py-4">
+                      <div className="text-sm font-medium text-slate-900">{company.ContactPerson || '-'}</div>
+                      <div className="text-[10px] text-slate-500">{company.Email || '-'}</div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-600">
+                      <div className="text-xs font-medium">{format(new Date(company.CreatedAt), 'dd.MM.yyyy')}</div>
+                      <div className="text-[10px] text-slate-400">{format(new Date(company.CreatedAt), 'HH:mm')}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                        company.IsActive ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                      }`}>
+                        {company.IsActive ? 'Aktif' : 'Pasif'}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full overflow-hidden flex flex-col">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-slate-800">Yeni Şirket Ekle</h3>
+              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600">&times;</button>
+            </div>
+            <form onSubmit={handleSubmit} className="p-6 flex flex-col gap-4 overflow-y-auto">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Firma Adı</label>
+                <input required type="text" value={formData.Name} onChange={e => setFormData({...formData, Name: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded focus:outline-none focus:border-blue-500 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Firma Kodu</label>
+                <input required type="text" value={formData.Code} onChange={e => setFormData({...formData, Code: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded focus:outline-none focus:border-blue-500 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Yetkili Kişi</label>
+                <input type="text" value={formData.ContactPerson} onChange={e => setFormData({...formData, ContactPerson: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded focus:outline-none focus:border-blue-500 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">E-Posta</label>
+                <input type="email" value={formData.Email} onChange={e => setFormData({...formData, Email: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded focus:outline-none focus:border-blue-500 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Telefon</label>
+                <input type="text" value={formData.Phone} onChange={e => setFormData({...formData, Phone: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded focus:outline-none focus:border-blue-500 text-sm" />
+              </div>
+              <div className="mt-4 flex justify-end gap-3">
+                <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800">İptal</button>
+                <button type="submit" disabled={submitting} className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
+                  {submitting ? 'Kaydediliyor...' : 'Kaydet'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
