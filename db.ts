@@ -1,0 +1,202 @@
+import knex from "knex";
+import path from "path";
+import fs from "fs";
+
+// Detect database client and connection parameters
+const dbClient = process.env.DB_CLIENT || 
+  (process.env.DATABASE_URL?.startsWith("postgres") ? "pg" : 
+   process.env.DATABASE_URL?.startsWith("mysql") ? "mysql2" : "better-sqlite3");
+
+let connectionConfig: any;
+
+if (dbClient === "better-sqlite3") {
+  const dataDir = path.join(process.cwd(), ".data");
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  connectionConfig = {
+    filename: path.join(dataDir, "lisans.db")
+  };
+} else {
+  if (process.env.DATABASE_URL) {
+    connectionConfig = process.env.DATABASE_URL;
+  } else {
+    connectionConfig = {
+      host: process.env.DB_HOST || "127.0.0.1",
+      port: process.env.DB_PORT ? parseInt(process.env.DB_PORT) : (dbClient === "pg" ? 5432 : 3306),
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
+      database: process.env.DB_NAME,
+      ssl: process.env.DB_SSL === "true" ? { rejectUnauthorized: false } : false
+    };
+  }
+}
+
+export const db = knex({
+  client: dbClient,
+  connection: connectionConfig,
+  useNullAsDefault: dbClient === "better-sqlite3"
+});
+
+export async function initializeSchema() {
+  console.log(`Initializing schema for database client: ${dbClient}...`);
+
+  // Check Companies table
+  if (!await db.schema.hasTable("Companies")) {
+    await db.schema.createTable("Companies", (table) => {
+      table.increments("Id").primary();
+      table.string("Name").notNullable();
+      table.string("Code").notNullable().unique();
+      table.text("Address").nullable();
+      table.string("Phone").nullable();
+      table.string("Email").nullable();
+      table.string("ContactPerson").nullable();
+      table.string("CreatedAt").notNullable();
+      table.string("LastSyncAt").nullable();
+      table.integer("IsActive").notNullable().defaultTo(1);
+    });
+    console.log("Table 'Companies' created.");
+  }
+
+  // Check Licenses table
+  if (!await db.schema.hasTable("Licenses")) {
+    await db.schema.createTable("Licenses", (table) => {
+      table.increments("Id").primary();
+      table.string("LicenseKey").notNullable().unique();
+      table.integer("CompanyId").unsigned().notNullable()
+        .references("Id").inTable("Companies").onDelete("CASCADE");
+      table.integer("Type").notNullable();
+      table.integer("Status").notNullable();
+      table.string("StartDate").notNullable();
+      table.string("ExpiryDate").notNullable();
+      table.string("MachineFingerprint").nullable();
+      table.string("CreatedAt").notNullable();
+      table.string("ActivatedAt").nullable();
+      table.text("Notes").nullable();
+      table.integer("MaxUsers").notNullable();
+      table.integer("MaxDevices").notNullable();
+      table.integer("EnableOfflineMode").notNullable().defaultTo(0);
+      table.integer("EnableSync").notNullable().defaultTo(1);
+    });
+    console.log("Table 'Licenses' created.");
+  }
+
+  // Check ApiKeys table
+  if (!await db.schema.hasTable("ApiKeys")) {
+    await db.schema.createTable("ApiKeys", (table) => {
+      table.increments("Id").primary();
+      table.string("Key").notNullable().unique();
+      table.integer("CompanyId").unsigned().notNullable()
+        .references("Id").inTable("Companies").onDelete("CASCADE");
+      table.string("Name").notNullable();
+      table.integer("Status").notNullable();
+      table.string("CreatedAt").notNullable();
+      table.string("ExpiryDate").nullable();
+      table.string("LastUsedAt").nullable();
+      table.string("LastUsedIp").nullable();
+      table.integer("RequestCount").notNullable().defaultTo(0);
+      table.text("Permissions").nullable();
+    });
+    console.log("Table 'ApiKeys' created.");
+  }
+
+  // Check ErrorLogs table
+  if (!await db.schema.hasTable("ErrorLogs")) {
+    await db.schema.createTable("ErrorLogs", (table) => {
+      table.increments("Id").primary();
+      table.integer("CompanyId").unsigned().nullable()
+        .references("Id").inTable("Companies").onDelete("SET NULL");
+      table.string("Source").notNullable();
+      table.integer("Level").notNullable();
+      table.string("Message").notNullable();
+      table.text("Details").nullable();
+      table.string("MachineName").nullable();
+      table.string("AppVersion").nullable();
+      table.string("CorrelationId").nullable();
+      table.string("EventType").nullable();
+      table.string("Timestamp").notNullable();
+      table.integer("IsResolved").notNullable().defaultTo(0);
+      table.string("ResolvedAt").nullable();
+      table.string("ResolvedBy").nullable();
+    });
+    console.log("Table 'ErrorLogs' created.");
+  }
+
+  // Check SyncQueue table
+  if (!await db.schema.hasTable("SyncQueue")) {
+    await db.schema.createTable("SyncQueue", (table) => {
+      table.increments("Id").primary();
+      table.integer("CompanyId").unsigned().notNullable()
+        .references("Id").inTable("Companies").onDelete("CASCADE");
+      table.string("DocumentType").notNullable();
+      table.string("ExternalId").notNullable();
+      table.string("DocumentNumber").nullable();
+      table.string("DocumentDate").notNullable();
+      table.text("Payload").notNullable();
+      table.integer("Status").notNullable();
+      table.integer("RetryCount").notNullable().defaultTo(0);
+      table.integer("MaxRetries").notNullable().defaultTo(3);
+      table.text("LastError").nullable();
+      table.integer("MikroRecno").nullable();
+      table.integer("Priority").notNullable().defaultTo(0);
+      table.string("QueuedAt").notNullable();
+      table.string("ProcessingStartedAt").nullable();
+      table.string("CompletedAt").nullable();
+      table.string("DeviceId").nullable();
+      table.string("UserId").nullable();
+
+      table.unique(["CompanyId", "ExternalId"]);
+    });
+    console.log("Table 'SyncQueue' created.");
+  }
+
+  // Check CariHesaplar table
+  if (!await db.schema.hasTable("CariHesaplar")) {
+    await db.schema.createTable("CariHesaplar", (table) => {
+      table.increments("Id").primary();
+      table.integer("CompanyId").unsigned().notNullable()
+        .references("Id").inTable("Companies").onDelete("CASCADE");
+      table.string("CariKodu").notNullable();
+      table.string("CariAdi").notNullable();
+      table.string("VergiDairesi").nullable();
+      table.string("VergiNumarasi").nullable();
+      table.float("Bakiye").notNullable().defaultTo(0.0);
+      table.string("LastSyncAt").notNullable();
+
+      table.unique(["CompanyId", "CariKodu"]);
+    });
+    console.log("Table 'CariHesaplar' created.");
+  }
+
+  // Check StokKartlar table
+  if (!await db.schema.hasTable("StokKartlar")) {
+    await db.schema.createTable("StokKartlar", (table) => {
+      table.increments("Id").primary();
+      table.integer("CompanyId").unsigned().notNullable()
+        .references("Id").inTable("Companies").onDelete("CASCADE");
+      table.string("StokKodu").notNullable();
+      table.string("StokAdi").notNullable();
+      table.string("Birim").nullable();
+      table.string("Barkod").nullable();
+      table.float("SatisFiyati1").notNullable().defaultTo(0.0);
+      table.string("LastSyncAt").notNullable();
+
+      table.unique(["CompanyId", "StokKodu"]);
+    });
+    console.log("Table 'StokKartlar' created.");
+  }
+
+  // Insert default company
+  const defaultCompany = await db("Companies").where({ Code: "ADMIN" }).first();
+  if (!defaultCompany) {
+    await db("Companies").insert({
+      Name: "Ana Şirket",
+      Code: "ADMIN",
+      CreatedAt: new Date().toISOString(),
+      IsActive: 1
+    });
+    console.log("Default company inserted.");
+  }
+  
+  console.log("Database schema initialization finished successfully.");
+}

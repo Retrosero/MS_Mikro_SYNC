@@ -18,7 +18,7 @@ RUN apk add --no-cache python3 make g++
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=4000
 
 COPY --from=builder /app/package*.json ./
 RUN npm ci --omit=dev
@@ -31,6 +31,6 @@ RUN mkdir -p .data && chown node:node .data
 
 USER node
 
-EXPOSE 3000
+EXPOSE 4000
 
 CMD ["npm", "start"]
