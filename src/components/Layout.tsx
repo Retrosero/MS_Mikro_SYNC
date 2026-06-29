@@ -1,3 +1,4 @@
+import React from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -42,9 +43,9 @@ export default function Layout({ children, onLogout }: LayoutProps) {
         <div className="p-6 border-b border-slate-800">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-8 h-8 bg-blue-500 rounded flex items-center justify-center">
-              <span className="text-white font-bold text-lg leading-none">M</span>
+              <span className="text-white font-bold text-lg leading-none">A</span>
             </div>
-            <span className="text-white font-bold text-xl tracking-tight">Mikro<span className="text-blue-400">Sync</span></span>
+            <span className="text-white font-bold text-xl tracking-tight">Admin <span className="text-blue-400">Dashboard</span></span>
           </div>
         </div>
         

@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS "Companies" (
     "Id" INTEGER NOT NULL CONSTRAINT "PK_Companies" PRIMARY KEY AUTOINCREMENT,
     "Name" TEXT NOT NULL,
     "Code" TEXT NOT NULL,
+    "TenantId" TEXT NULL,
     "Address" TEXT NULL,
     "Phone" TEXT NULL,
     "Email" TEXT NULL,

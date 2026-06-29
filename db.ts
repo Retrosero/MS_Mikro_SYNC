@@ -47,6 +47,7 @@ export async function initializeSchema() {
       table.increments("Id").primary();
       table.string("Name").notNullable();
       table.string("Code").notNullable().unique();
+      table.string("TenantId").nullable();
       table.text("Address").nullable();
       table.string("Phone").nullable();
       table.string("Email").nullable();
@@ -56,6 +57,14 @@ export async function initializeSchema() {
       table.integer("IsActive").notNullable().defaultTo(1);
     });
     console.log("Table 'Companies' created.");
+  } else {
+    // If table exists, check and add TenantId column
+    if (!await db.schema.hasColumn("Companies", "TenantId")) {
+      await db.schema.alterTable("Companies", (table) => {
+        table.string("TenantId").nullable();
+      });
+      console.log("Column 'TenantId' added to existing 'Companies' table.");
+    }
   }
 
   // Check Licenses table
@@ -192,10 +201,22 @@ export async function initializeSchema() {
     await db("Companies").insert({
       Name: "Ana Şirket",
       Code: "ADMIN",
+      TenantId: "tnt_admin",
       CreatedAt: new Date().toISOString(),
       IsActive: 1
     });
     console.log("Default company inserted.");
+  } else if (!defaultCompany.TenantId) {
+    await db("Companies").where({ Code: "ADMIN" }).update({ TenantId: "tnt_admin" });
+    console.log("Default company TenantId updated.");
+  }
+
+  // Backfill existing companies with TenantId if they don't have one
+  const companiesWithoutTenant = await db("Companies").whereNull("TenantId").orWhere("TenantId", "");
+  for (const comp of companiesWithoutTenant) {
+    const generatedTenantId = comp.Code === "ADMIN" ? "tnt_admin" : `tnt_${require('crypto').randomBytes(6).toString('hex')}`;
+    await db("Companies").where({ Id: comp.Id }).update({ TenantId: generatedTenantId });
+    console.log(`Backfilled TenantId ${generatedTenantId} for company: ${comp.Name}`);
   }
   
   console.log("Database schema initialization finished successfully.");

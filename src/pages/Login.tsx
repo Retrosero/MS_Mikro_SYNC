@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { KeyRound } from 'lucide-react';
 
 interface LoginProps {
@@ -42,9 +42,9 @@ export default function Login({ onLogin }: LoginProps) {
       <div className="max-w-md w-full bg-white rounded-xl shadow-lg border border-slate-200 p-8">
         <div className="flex flex-col items-center mb-8">
           <div className="w-12 h-12 bg-blue-500 rounded flex items-center justify-center mb-4">
-            <span className="text-white font-bold text-2xl leading-none">M</span>
+            <span className="text-white font-bold text-2xl leading-none">A</span>
           </div>
-          <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Mikro<span className="text-blue-500">Sync</span></h1>
+          <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Admin <span className="text-blue-500">Dashboard</span></h1>
           <p className="text-slate-500 mt-2 text-sm">Central Management Console</p>
         </div>
 

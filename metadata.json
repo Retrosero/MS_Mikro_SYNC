@@ -1,5 +1,5 @@
 {
-  "name": "MikroSync Admin Panel",
+  "name": "Admin Dashboard",
   "description": "Mikro ERP ve Android uygulaması arasında veri senkronizasyonu için lisans ve API anahtarı yönetim paneli.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

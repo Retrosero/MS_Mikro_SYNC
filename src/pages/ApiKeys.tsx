@@ -1,6 +1,36 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { ApiKey, Company } from '../types';
 import { format, addYears } from 'date-fns';
+import { Copy, Check } from 'lucide-react';
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy text: ', err);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      type="button"
+      className={`p-1.5 rounded-md border transition-all duration-200 flex items-center justify-center shrink-0 ${
+        copied
+          ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
+          : 'bg-white border-slate-200 hover:border-slate-300 text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+      }`}
+      title={copied ? 'Kopyalandı!' : 'Kopyala'}
+    >
+      {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+    </button>
+  );
+}
 
 export default function ApiKeys() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
@@ -136,9 +166,12 @@ export default function ApiKeys() {
                   <tr key={k.Id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-6 py-4 text-sm font-medium text-slate-900">{k.Name}</td>
                     <td className="px-6 py-4">
-                      <span className="font-mono text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded">
-                        {k.Key.substring(0, 16)}...
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded break-all select-all">
+                          {k.Key}
+                        </span>
+                        <CopyButton text={k.Key} />
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-sm text-slate-600">{k.CompanyName}</td>
                     <td className="px-6 py-4 text-sm text-slate-600">

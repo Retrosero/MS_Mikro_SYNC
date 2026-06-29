@@ -1,6 +1,36 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { Company } from '../types';
 import { format } from 'date-fns';
+import { Copy, Check } from 'lucide-react';
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy text: ', err);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      type="button"
+      className={`p-1.5 rounded-md border transition-all duration-200 flex items-center justify-center shrink-0 ${
+        copied
+          ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
+          : 'bg-white border-slate-200 hover:border-slate-300 text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+      }`}
+      title={copied ? 'Kopyalandı!' : 'Kopyala'}
+    >
+      {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+    </button>
+  );
+}
 
 export default function Companies() {
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -9,6 +39,7 @@ export default function Companies() {
   const [formData, setFormData] = useState({
     Name: '',
     Code: '',
+    TenantId: '',
     Email: '',
     Phone: '',
     Address: '',
@@ -52,7 +83,7 @@ export default function Companies() {
       });
       if (res.ok) {
         setIsModalOpen(false);
-        setFormData({ Name: '', Code: '', Email: '', Phone: '', Address: '', ContactPerson: '' });
+        setFormData({ Name: '', Code: '', TenantId: '', Email: '', Phone: '', Address: '', ContactPerson: '' });
         fetchCompanies();
       } else {
         const err = await res.json();
@@ -82,6 +113,7 @@ export default function Companies() {
             <thead className="bg-slate-50 sticky top-0">
               <tr>
                 <th className="px-6 py-3 text-xs font-semibold text-slate-500 uppercase">Firma Kodu</th>
+                <th className="px-6 py-3 text-xs font-semibold text-slate-500 uppercase">Tenant ID</th>
                 <th className="px-6 py-3 text-xs font-semibold text-slate-500 uppercase">Firma Adı</th>
                 <th className="px-6 py-3 text-xs font-semibold text-slate-500 uppercase">İletişim</th>
                 <th className="px-6 py-3 text-xs font-semibold text-slate-500 uppercase">Kayıt Tarihi</th>
@@ -91,11 +123,11 @@ export default function Companies() {
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-slate-500">Yükleniyor...</td>
+                  <td colSpan={6} className="px-6 py-8 text-center text-slate-500">Yükleniyor...</td>
                 </tr>
               ) : companies.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-slate-500">Kayıt bulunamadı.</td>
+                  <td colSpan={6} className="px-6 py-8 text-center text-slate-500">Kayıt bulunamadı.</td>
                 </tr>
               ) : (
                 companies.map((company) => (
@@ -104,6 +136,14 @@ export default function Companies() {
                       <span className="font-mono text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded">
                         {company.Code}
                       </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded break-all select-all">
+                          {company.TenantId || '-'}
+                        </span>
+                        {company.TenantId && <CopyButton text={company.TenantId} />}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-sm font-medium text-slate-900">{company.Name}</td>
                     <td className="px-6 py-4">
@@ -144,6 +184,10 @@ export default function Companies() {
               <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Firma Kodu</label>
                 <input required type="text" value={formData.Code} onChange={e => setFormData({...formData, Code: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded focus:outline-none focus:border-blue-500 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Tenant ID (Opsiyonel)</label>
+                <input type="text" placeholder="Boş bırakılırsa otomatik üretilir" value={formData.TenantId} onChange={e => setFormData({...formData, TenantId: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded focus:outline-none focus:border-blue-500 text-sm" />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Yetkili Kişi</label>

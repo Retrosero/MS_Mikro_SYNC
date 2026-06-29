@@ -2,6 +2,7 @@ export interface Company {
   Id: number;
   Name: string;
   Code: string;
+  TenantId: string;
   Email: string;
   Phone: string;
   Address: string;

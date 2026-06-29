@@ -99,11 +99,18 @@ app.get("/api/companies", authenticateAdmin, async (req, res) => {
 });
 
 app.post("/api/companies", authenticateAdmin, async (req, res) => {
-  const { Name, Code, Email, Phone, Address, ContactPerson } = req.body;
+  const { Name, Code, Email, Phone, Address, ContactPerson, TenantId } = req.body;
+  
+  // Generate random tenant ID if not provided
+  const finalTenantId = TenantId && TenantId.trim() !== "" 
+    ? TenantId.trim() 
+    : `tnt_${require('crypto').randomBytes(6).toString('hex')}`;
+
   try {
     const result = await db("Companies").insert({
       Name,
       Code,
+      TenantId: finalTenantId,
       Email,
       Phone,
       Address,
