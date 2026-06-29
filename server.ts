@@ -39,6 +39,10 @@ const loginLimiter = rateLimit({
 app.use(cors());
 app.use(express.json({ limit: '1mb' })); // Limit JSON body size to prevent payload exhaustion
 
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
 // Setup simple admin auth middleware
 const authenticateAdmin = (req: any, res: any, next: any) => {
   const token = req.headers.authorization?.split(" ")[1];
