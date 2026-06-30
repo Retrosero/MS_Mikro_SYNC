@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import type { License, Company } from '../types';
 import { format, addYears } from 'date-fns';
 import { Copy, Check } from 'lucide-react';
+import { authFetch } from '../lib/api';
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -57,10 +58,7 @@ export default function Licenses() {
 
   const fetchLicenses = async () => {
     try {
-      const token = localStorage.getItem('adminToken');
-      const res = await fetch('/api/licenses', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await authFetch('/api/licenses');
       if (res.ok) {
         const data = await res.json();
         setLicenses(data);
@@ -74,10 +72,7 @@ export default function Licenses() {
 
   const fetchCompanies = async () => {
     try {
-      const token = localStorage.getItem('adminToken');
-      const res = await fetch('/api/companies', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await authFetch('/api/companies');
       if (res.ok) {
         const data = await res.json();
         setCompanies(data);
@@ -91,12 +86,10 @@ export default function Licenses() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const token = localStorage.getItem('adminToken');
-      const res = await fetch('/api/licenses', {
+      const res = await authFetch('/api/licenses', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(formData)
       });
@@ -104,6 +97,8 @@ export default function Licenses() {
         setIsModalOpen(false);
         setFormData({ ...formData, CompanyId: '' }); // Reset
         fetchLicenses();
+      } else if (res.status === 401) {
+        return;
       } else {
         const err = await res.json();
         alert('Hata: ' + (err.error || 'Lisans oluşturulamadı'));
@@ -127,12 +122,10 @@ export default function Licenses() {
   const toggleStatus = async (id: number, currentStatus: number) => {
     const newStatus = currentStatus === 1 ? 3 : 1; // Toggle active/suspended
     try {
-      const token = localStorage.getItem('adminToken');
-      await fetch(`/api/licenses/${id}/status`, {
+      await authFetch(`/api/licenses/${id}/status`, {
         method: 'PUT',
         headers: { 
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ Status: newStatus })
       });

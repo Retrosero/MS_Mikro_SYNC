@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import type { ApiKey, Company } from '../types';
 import { format, addYears } from 'date-fns';
 import { Copy, Check } from 'lucide-react';
+import { authFetch } from '../lib/api';
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -52,10 +53,7 @@ export default function ApiKeys() {
 
   const fetchKeys = async () => {
     try {
-      const token = localStorage.getItem('adminToken');
-      const res = await fetch('/api/apikeys', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await authFetch('/api/apikeys');
       if (res.ok) {
         const data = await res.json();
         setKeys(data);
@@ -69,10 +67,7 @@ export default function ApiKeys() {
 
   const fetchCompanies = async () => {
     try {
-      const token = localStorage.getItem('adminToken');
-      const res = await fetch('/api/companies', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await authFetch('/api/companies');
       if (res.ok) {
         const data = await res.json();
         setCompanies(data);
@@ -86,12 +81,10 @@ export default function ApiKeys() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const token = localStorage.getItem('adminToken');
-      const res = await fetch('/api/apikeys', {
+      const res = await authFetch('/api/apikeys', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(formData)
       });
@@ -99,6 +92,8 @@ export default function ApiKeys() {
         setIsModalOpen(false);
         setFormData({ ...formData, Name: '', CompanyId: '' }); // Reset
         fetchKeys();
+      } else if (res.status === 401) {
+        return;
       } else {
         const err = await res.json();
         alert('Hata: ' + (err.error || 'API Anahtarı oluşturulamadı'));
@@ -113,12 +108,10 @@ export default function ApiKeys() {
   const toggleStatus = async (id: number, currentStatus: number) => {
     const newStatus = currentStatus === 1 ? 0 : 1; 
     try {
-      const token = localStorage.getItem('adminToken');
-      await fetch(`/api/apikeys/${id}/status`, {
+      await authFetch(`/api/apikeys/${id}/status`, {
         method: 'PUT',
         headers: { 
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ Status: newStatus })
       });

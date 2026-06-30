@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import type { Company } from '../types';
 import { format } from 'date-fns';
 import { Copy, Check } from 'lucide-react';
+import { authFetch } from '../lib/api';
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -53,10 +54,7 @@ export default function Companies() {
 
   const fetchCompanies = async () => {
     try {
-      const token = localStorage.getItem('adminToken');
-      const res = await fetch('/api/companies', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await authFetch('/api/companies');
       if (res.ok) {
         const data = await res.json();
         setCompanies(data);
@@ -72,12 +70,10 @@ export default function Companies() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const token = localStorage.getItem('adminToken');
-      const res = await fetch('/api/companies', {
+      const res = await authFetch('/api/companies', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify(formData)
       });
@@ -85,6 +81,8 @@ export default function Companies() {
         setIsModalOpen(false);
         setFormData({ Name: '', Code: '', TenantId: '', Email: '', Phone: '', Address: '', ContactPerson: '' });
         fetchCompanies();
+      } else if (res.status === 401) {
+        return;
       } else {
         const err = await res.json();
         alert('Hata: ' + (err.error || 'Şirket eklenemedi'));

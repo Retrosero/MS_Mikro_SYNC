@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Building2, KeyRound, CheckCircle2, ShieldAlert } from 'lucide-react';
 import type { DashboardStats } from '../types';
+import { authFetch } from '../lib/api';
 
 export default function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -12,10 +13,7 @@ export default function Dashboard() {
 
   const fetchStats = async () => {
     try {
-      const token = localStorage.getItem('adminToken');
-      const res = await fetch('/api/stats', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await authFetch('/api/stats');
       if (res.ok) {
         const data = await res.json();
         setStats(data);

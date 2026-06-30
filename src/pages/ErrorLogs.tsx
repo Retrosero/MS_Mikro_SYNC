@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { ErrorLog } from '../types';
 import { format } from 'date-fns';
+import { authFetch } from '../lib/api';
 
 export default function ErrorLogs() {
   const [logs, setLogs] = useState<ErrorLog[]>([]);
@@ -12,10 +13,7 @@ export default function ErrorLogs() {
 
   const fetchLogs = async () => {
     try {
-      const token = localStorage.getItem('adminToken');
-      const res = await fetch('/api/logs', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await authFetch('/api/logs');
       if (res.ok) {
         const data = await res.json();
         setLogs(data);
@@ -29,10 +27,8 @@ export default function ErrorLogs() {
 
   const markResolved = async (id: number) => {
     try {
-      const token = localStorage.getItem('adminToken');
-      await fetch(`/api/logs/${id}/resolve`, {
-        method: 'PUT',
-        headers: { Authorization: `Bearer ${token}` }
+      await authFetch(`/api/logs/${id}/resolve`, {
+        method: 'PUT'
       });
       fetchLogs();
     } catch (e) {

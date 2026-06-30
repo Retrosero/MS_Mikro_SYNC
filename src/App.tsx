@@ -7,6 +7,7 @@ import Licenses from './pages/Licenses';
 import ApiKeys from './pages/ApiKeys';
 import ErrorLogs from './pages/ErrorLogs';
 import Login from './pages/Login';
+import { clearAdminSession } from './lib/api';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!!localStorage.getItem('adminToken'));
@@ -17,9 +18,18 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('adminToken');
+    clearAdminSession();
     setIsAuthenticated(false);
   };
+
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      setIsAuthenticated(false);
+    };
+
+    window.addEventListener('admin-session-expired', handleSessionExpired);
+    return () => window.removeEventListener('admin-session-expired', handleSessionExpired);
+  }, []);
 
   if (!isAuthenticated) {
     return <Login onLogin={handleLogin} />;
