@@ -1,6 +1,7 @@
 import knex from "knex";
 import path from "path";
 import fs from "fs";
+import crypto from "node:crypto";
 
 // Detect database client and connection parameters
 const dbClient = process.env.DB_CLIENT || 
@@ -214,7 +215,7 @@ export async function initializeSchema() {
   // Backfill existing companies with TenantId if they don't have one
   const companiesWithoutTenant = await db("Companies").whereNull("TenantId").orWhere("TenantId", "");
   for (const comp of companiesWithoutTenant) {
-    const generatedTenantId = comp.Code === "ADMIN" ? "tnt_admin" : `tnt_${require('crypto').randomBytes(6).toString('hex')}`;
+    const generatedTenantId = comp.Code === "ADMIN" ? "tnt_admin" : `tnt_${crypto.randomBytes(6).toString('hex')}`;
     await db("Companies").where({ Id: comp.Id }).update({ TenantId: generatedTenantId });
     console.log(`Backfilled TenantId ${generatedTenantId} for company: ${comp.Name}`);
   }

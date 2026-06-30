@@ -5,12 +5,24 @@ import { createServer as createViteServer } from "vite";
 import jwt from "jsonwebtoken";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import crypto from "node:crypto";
 import { db, initializeSchema } from "./db";
 
 const app = express();
 app.set("trust proxy", 1);
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const parsedPort = process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 3000;
+const PORT = Number.isFinite(parsedPort) ? parsedPort : 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "lisans-super-secret-key-123";
+const isProduction = process.env.NODE_ENV === "production";
+let databaseStatus: "initializing" | "ready" | "error" = "initializing";
+let databaseError: string | null = null;
+
+function getDatabaseHealth() {
+  return {
+    database: databaseStatus,
+    ...(databaseStatus === "error" && !isProduction ? { databaseError } : {})
+  };
+}
 
 // Security Middleware
 app.use(helmet({
@@ -40,7 +52,22 @@ app.use(cors());
 app.use(express.json({ limit: '1mb' })); // Limit JSON body size to prevent payload exhaustion
 
 app.get("/health", (req, res) => {
-  res.status(200).json({ status: "ok" });
+  res.status(200).json({
+    status: "ok",
+    ...getDatabaseHealth(),
+    uptime: process.uptime()
+  });
+});
+
+app.get("/ready", (req, res) => {
+  if (databaseStatus !== "ready") {
+    return res.status(503).json({
+      status: "not_ready",
+      ...getDatabaseHealth()
+    });
+  }
+
+  res.status(200).json({ status: "ready" });
 });
 
 // Setup simple admin auth middleware
@@ -108,7 +135,7 @@ app.post("/api/companies", authenticateAdmin, async (req, res) => {
   // Generate random tenant ID if not provided
   const finalTenantId = TenantId && TenantId.trim() !== "" 
     ? TenantId.trim() 
-    : `tnt_${require('crypto').randomBytes(6).toString('hex')}`;
+    : `tnt_${crypto.randomBytes(6).toString('hex')}`;
 
   try {
     const result = await db("Companies").insert({
@@ -147,7 +174,7 @@ app.post("/api/licenses", authenticateAdmin, async (req, res) => {
   const { CompanyId, Type, StartDate, ExpiryDate, MaxUsers, MaxDevices, EnableOfflineMode, EnableSync } = req.body;
   
   // Generate random license key
-  const LicenseKey = require('crypto').randomBytes(16).toString('hex').toUpperCase().match(/.{1,4}/g)?.join('-') || "INVALID-KEY";
+  const LicenseKey = crypto.randomBytes(16).toString('hex').toUpperCase().match(/.{1,4}/g)?.join('-') || "INVALID-KEY";
   
   try {
     const result = await db("Licenses").insert({
@@ -197,7 +224,7 @@ app.get("/api/apikeys", authenticateAdmin, async (req, res) => {
 app.post("/api/apikeys", authenticateAdmin, async (req, res) => {
   const { CompanyId, Name, ExpiryDate } = req.body;
   
-  const Key = 'ak_' + require('crypto').randomBytes(32).toString('hex');
+  const Key = 'ak_' + crypto.randomBytes(32).toString('hex');
   
   try {
     const result = await db("ApiKeys").insert({
@@ -555,14 +582,20 @@ app.post("/api/erp/queue/status", authenticateClient, async (req: any, res: any)
   }
 });
 
-// Vite middleware for development
-async function startServer() {
+async function initializeDatabase() {
   try {
     await initializeSchema();
+    databaseStatus = "ready";
+    databaseError = null;
   } catch (err) {
     console.error("Failed to initialize database schema:", err);
+    databaseStatus = "error";
+    databaseError = err instanceof Error ? err.message : String(err);
   }
+}
 
+// Vite middleware for development
+async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -580,6 +613,8 @@ async function startServer() {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  void initializeDatabase();
 }
 
 startServer();
