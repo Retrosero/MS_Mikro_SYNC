@@ -223,9 +223,9 @@ app.get("/api/apikeys", authenticateAdmin, async (req, res) => {
 
 app.post("/api/apikeys", authenticateAdmin, async (req, res) => {
   const { CompanyId, Name, ExpiryDate } = req.body;
-  
+
   const Key = 'ak_' + crypto.randomBytes(32).toString('hex');
-  
+
   try {
     const result = await db("ApiKeys").insert({
       Key,
@@ -235,8 +235,40 @@ app.post("/api/apikeys", authenticateAdmin, async (req, res) => {
       CreatedAt: new Date().toISOString(),
       ExpiryDate
     }).returning("Id");
-    
+
     const id = result[0]?.Id || result[0]?.id || result[0];
+
+    // Bridge webhook: Sync Adapter'a tenant + key'i aktar.
+    // Fire-and-forget; hata loglanir ama INSERT'i engellemez.
+    const syncAdapterUrl = process.env.SYNC_ADAPTER_URL;
+    const bridgeSecret = process.env.SYNC_ADAPTER_BRIDGE_SECRET;
+    if (syncAdapterUrl) {
+      const company = await db("Companies").where({ Id: CompanyId }).first();
+      if (company) {
+        const tenantId = company.TenantId || `tnt_${CompanyId}`;
+        fetch(`${syncAdapterUrl.replace(/\/+$/, "")}/api/v1/tenants/import`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Bridge-Secret": bridgeSecret || "",
+          },
+          body: JSON.stringify({
+            tenant_id: tenantId,
+            api_key: Key,
+            company_name: company.Name,
+            label: Name,
+          }),
+        })
+          .then((r) => {
+            if (!r.ok) console.error(`[bridge] Sync Adapter import HTTP ${r.status}`);
+            else console.log(`[bridge] tenant ${tenantId} -> Sync Adapter OK`);
+          })
+          .catch((err) =>
+            console.error("[bridge] Sync Adapter webhook failed:", err.message)
+          );
+      }
+    }
+
     res.json({ id, Key });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -405,6 +437,41 @@ app.post("/api/client/logs", authenticateClient, async (req: any, res: any) => {
       Details: StackTrace,
       Timestamp: new Date().toISOString(),
       IsResolved: 0
+    });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4b. Log errors from Sync Adapter Agent (Bridge: Serhan'in tum musterilerini tek panelden izlemesi icin)
+// authenticateClient zaten api_key uzerinden CompanyId'yi set ediyor.
+app.post("/api/agent/logs", authenticateClient, async (req: any, res: any) => {
+  const companyId = req.client.CompanyId;
+  const {
+    AppVersion,
+    DeviceId,
+    Level,
+    Source,
+    Message,
+    StackTrace,
+    CorrelationId,
+    EventType,
+  } = req.body;
+
+  try {
+    await db("ErrorLogs").insert({
+      CompanyId: companyId,
+      AppVersion: AppVersion || "SyncAdapter.Agent",
+      MachineName: DeviceId,
+      Level: Level || 3,
+      Source: Source || "SyncAdapter.Agent",
+      Message,
+      Details: StackTrace,
+      CorrelationId: CorrelationId || null,
+      EventType: EventType || "sync",
+      Timestamp: new Date().toISOString(),
+      IsResolved: 0,
     });
     res.json({ success: true });
   } catch (err: any) {
