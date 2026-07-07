@@ -7,6 +7,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import crypto from "node:crypto";
 import { db, initializeSchema } from "./db";
+import { createAndroidBridgeRouter } from "./src/androidBridge";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -1036,6 +1037,14 @@ agentRouter.get("/data/:kind", authenticateAgent, async (req: any, res) => {
 
 app.use("/agent/v1", agentRouter);
 app.use("/api/agent/v1", agentRouter);
+
+// --- Android Saha-Satış Bridge API ---
+// Android (saha-satış) uygulaması MultiTenantInterceptor aracılığıyla
+//   GET  /api/v1/sync/<entity>  →  POST /api/v1/android/sync/<entity>
+//   POST /api/v1/sync/push     →  POST /api/v1/android/push
+// çağrısı yapar. Bu sözleşme SaaS multi-tenant yapısına uygundur:
+// tenant_id + api_key body'de gelir, server CompanyId'ye çözümler.
+app.use("/api/v1/android", syncLimiter, createAndroidBridgeRouter());
 
 // --- ERP / Windows Sync Service API Routes ---
 
