@@ -14,6 +14,7 @@ const parsedPort = process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 30
 const PORT = Number.isFinite(parsedPort) ? parsedPort : 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "lisans-super-secret-key-123";
 const isProduction = process.env.NODE_ENV === "production";
+const jsonBodyLimit = process.env.JSON_BODY_LIMIT || process.env.SYNC_JSON_LIMIT || "25mb";
 let databaseStatus: "initializing" | "ready" | "error" = "initializing";
 let databaseError: string | null = null;
 
@@ -21,6 +22,63 @@ function getDatabaseHealth() {
   return {
     database: databaseStatus,
     ...(databaseStatus === "error" && !isProduction ? { databaseError } : {})
+  };
+}
+
+function pickFirst(source: any, keys: string[]) {
+  for (const key of keys) {
+    const value = source?.[key];
+    if (value !== undefined && value !== null && value !== "") {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeString(source: any, keys: string[], maxLength?: number) {
+  const value = pickFirst(source, keys);
+  if (value === undefined) return null;
+
+  const normalized = String(value).trim();
+  if (!normalized) return null;
+
+  return maxLength ? normalized.slice(0, maxLength) : normalized;
+}
+
+function normalizeNumber(source: any, keys: string[], fallback = 0) {
+  const value = pickFirst(source, keys);
+  if (value === undefined) return fallback;
+
+  const normalized = typeof value === "string" ? value.replace(",", ".") : value;
+  const numberValue = Number.parseFloat(normalized);
+  return Number.isFinite(numberValue) ? numberValue : fallback;
+}
+
+function getBulkItems(req: any) {
+  if (Array.isArray(req.body)) return req.body;
+  if (Array.isArray(req.body?.items)) return req.body.items;
+  if (Array.isArray(req.body?.Items)) return req.body.Items;
+  return null;
+}
+
+function normalizeCari(item: any) {
+  return {
+    CariKodu: normalizeString(item, ["CariKodu", "cariKodu", "CariKod", "cariKod", "cari_kod", "CARIKODU", "Kod", "kod"], 50),
+    CariAdi: normalizeString(item, ["CariAdi", "cariAdi", "CariAd", "cariAd", "cari_unvan1", "cari_unvan2", "CARIADI", "Adi", "ad", "Name"], 255),
+    VergiDairesi: normalizeString(item, ["VergiDairesi", "vergiDairesi", "cari_vdaire_adi"], 100),
+    VergiNumarasi: normalizeString(item, ["VergiNumarasi", "vergiNumarasi", "cari_vdaire_no", "VergiNo", "Tckn"], 50),
+    Bakiye: normalizeNumber(item, ["Bakiye", "bakiye", "Balance", "balance"], 0),
+  };
+}
+
+function normalizeStok(item: any) {
+  return {
+    StokKodu: normalizeString(item, ["StokKodu", "stokKodu", "StokKod", "stokKod", "sto_kod", "STOKKODU", "Kod", "kod"], 50),
+    StokAdi: normalizeString(item, ["StokAdi", "stokAdi", "StokAd", "stokAd", "sto_isim", "STOKADI", "Adi", "ad", "Name"], 255),
+    Birim: normalizeString(item, ["Birim", "birim", "sto_birim1_ad", "BirimAdi"], 50),
+    Barkod: normalizeString(item, ["Barkod", "barkod", "bar_kodu", "Barcode"], 100),
+    SatisFiyati1: normalizeNumber(item, ["SatisFiyati1", "satisFiyati1", "Fiyat", "fiyat", "Price", "price"], 0),
   };
 }
 
@@ -36,6 +94,16 @@ const apiLimiter = rateLimit({
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
   message: { error: "Too many requests from this IP, please try again after 15 minutes" },
+  validate: false,
+  skip: (req) => req.originalUrl.startsWith("/api/erp/") || req.originalUrl.startsWith("/api/agent/")
+});
+
+const syncLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: Number.parseInt(process.env.SYNC_RATE_LIMIT_MAX || "2000", 10),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many sync requests from this IP, please try again later" },
   validate: false
 });
 
@@ -49,7 +117,7 @@ const loginLimiter = rateLimit({
 });
 
 app.use(cors());
-app.use(express.json({ limit: '1mb' })); // Limit JSON body size to prevent payload exhaustion
+app.use(express.json({ limit: jsonBodyLimit }));
 
 app.get("/health", (req, res) => {
   res.status(200).json({
@@ -87,6 +155,10 @@ const authenticateAdmin = (req: any, res: any, next: any) => {
 // --- API Routes ---
 
 app.use("/api/", apiLimiter);
+app.use("/api/erp/", syncLimiter);
+app.use("/api/agent/", syncLimiter);
+app.use("/agent/v1/", syncLimiter);
+app.use("/api/agent/v1/", syncLimiter);
 
 app.post("/api/login", loginLimiter, (req, res) => {
   const { username, password } = req.body;
@@ -331,6 +403,14 @@ const authenticateClient = async (req: any, res: any, next: any) => {
       return res.status(401).json({ error: "Invalid, inactive, or expired API Key" });
     }
 
+    await db("ApiKeys")
+      .where({ Id: keyRecord.Id })
+      .update({
+        LastUsedAt: new Date().toISOString(),
+        LastUsedIp: req.ip,
+        RequestCount: db.raw("RequestCount + 1"),
+      });
+
     req.client = { CompanyId: keyRecord.CompanyId };
     next();
   } catch (err: any) {
@@ -338,6 +418,139 @@ const authenticateClient = async (req: any, res: any, next: any) => {
     return res.status(500).json({ error: "Internal server error during authentication" });
   }
 };
+
+async function getActiveApiKeyRecord(apiKey: string) {
+  return await db("ApiKeys")
+    .where({ Key: apiKey, Status: 1 })
+    .andWhere(function() {
+      this.whereNull("ExpiryDate").orWhere("ExpiryDate", ">", new Date().toISOString());
+    })
+    .first();
+}
+
+async function touchApiKey(keyId: any, req: any) {
+  await db("ApiKeys")
+    .where({ Id: keyId })
+    .update({
+      LastUsedAt: new Date().toISOString(),
+      LastUsedIp: req.ip,
+      RequestCount: db.raw("RequestCount + 1"),
+    });
+}
+
+async function getCompanyById(companyId: any) {
+  return await db("Companies").where({ Id: companyId }).first();
+}
+
+async function getActiveLicense(companyId: any) {
+  return await db("Licenses")
+    .where({ CompanyId: companyId, Status: 1 })
+    .andWhere("ExpiryDate", ">", new Date().toISOString())
+    .orderBy("ExpiryDate", "desc")
+    .first();
+}
+
+async function resolveAgentAuth(req: any) {
+  const authHeader = req.headers.authorization || "";
+  const bearer = typeof authHeader === "string" && authHeader.startsWith("Bearer ")
+    ? authHeader.slice("Bearer ".length).trim()
+    : "";
+
+  if (bearer) {
+    const decoded: any = jwt.verify(bearer, JWT_SECRET);
+    if (decoded?.type !== "sync-agent") {
+      throw new Error("invalid_agent_token");
+    }
+
+    return {
+      CompanyId: decoded.company_id || decoded.CompanyId,
+      TenantId: decoded.tenant_id || decoded.TenantId,
+      DeviceId: decoded.device_id || decoded.DeviceId,
+      ApiKeyId: decoded.api_key_id || decoded.ApiKeyId,
+    };
+  }
+
+  const apiKey = req.headers["x-api-key"] || req.query.apiKey;
+  if (!apiKey) {
+    throw new Error("missing_agent_token");
+  }
+
+  const keyRecord = await getActiveApiKeyRecord(String(apiKey));
+  if (!keyRecord) {
+    throw new Error("invalid_api_key");
+  }
+
+  const company = await getCompanyById(keyRecord.CompanyId);
+  return {
+    CompanyId: keyRecord.CompanyId,
+    TenantId: company?.TenantId || `tnt_${keyRecord.CompanyId}`,
+    DeviceId: req.headers["x-device-id"] || null,
+    ApiKeyId: keyRecord.Id,
+  };
+}
+
+const authenticateAgent = async (req: any, res: any, next: any) => {
+  try {
+    req.agent = await resolveAgentAuth(req);
+    next();
+  } catch (err: any) {
+    return res.status(401).json({
+      error: "unauthorized",
+      message: err?.message || "Invalid agent token",
+    });
+  }
+};
+
+function toAgentConfig(tenantId: string) {
+  return {
+    tenant_id: tenantId,
+    config_version: 1,
+    mikro_version: process.env.MIKRO_VERSION || "V15",
+    allowed_document_types: [
+      "SIPARIS",
+      "SATIS",
+      "TAHSILAT",
+      "IADE",
+      "ALIS",
+      "STOK",
+      "CARI",
+    ],
+    bootstrap_kinds: [
+      "customers",
+      "stocks",
+      "prices",
+      "warehouses",
+      "cash_accounts",
+      "bank_accounts",
+    ],
+    settings: {
+      queue_mode: "pull",
+      api_surface: "ms_mikro_sync_compat",
+      batch_size: "500",
+    },
+    server_time: new Date().toISOString(),
+  };
+}
+
+function normalizeAgentDataItem(item: any) {
+  if (item?.payload_json) {
+    try {
+      return JSON.parse(item.payload_json);
+    } catch {
+      return item;
+    }
+  }
+
+  if (item?.payloadJson) {
+    try {
+      return JSON.parse(item.payloadJson);
+    } catch {
+      return item;
+    }
+  }
+
+  return item?.payload || item;
+}
 
 // 0. Verify Key
 app.get("/api/client/verify", authenticateClient, async (req: any, res: any) => {
@@ -479,24 +692,374 @@ app.post("/api/agent/logs", authenticateClient, async (req: any, res: any) => {
   }
 });
 
+// --- Sync Adapter Central API compatibility routes ---
+
+const agentRouter = express.Router();
+
+agentRouter.get("/health", (req, res) => {
+  res.json({
+    status: databaseStatus === "ready" ? "ok" : "not_ready",
+    ...getDatabaseHealth(),
+    server_time: new Date().toISOString(),
+  });
+});
+
+agentRouter.post("/activate", async (req: any, res) => {
+  const apiKey = req.body?.api_key || req.body?.ApiKey || req.body?.apiKey;
+  const requestedTenantId = req.body?.tenant_id || req.body?.TenantId || req.body?.tenantId;
+  const machineFingerprint = req.body?.machine_fingerprint || req.body?.MachineFingerprint || req.body?.machineFingerprint;
+  const agentVersion = req.body?.agent_version || req.body?.AgentVersion || req.body?.agentVersion;
+
+  if (!apiKey) {
+    return res.status(400).json({
+      activated: false,
+      error_code: "missing_api_key",
+      error_message: "api_key is required",
+    });
+  }
+
+  try {
+    const keyRecord = await getActiveApiKeyRecord(String(apiKey));
+    if (!keyRecord) {
+      return res.status(401).json({
+        activated: false,
+        error_code: "invalid_api_key",
+        error_message: "Invalid, inactive, or expired API key",
+      });
+    }
+
+    const company = await getCompanyById(keyRecord.CompanyId);
+    if (!company || company.IsActive === 0) {
+      return res.status(403).json({
+        activated: false,
+        error_code: "company_inactive",
+        error_message: "Company is inactive",
+      });
+    }
+
+    const activeLicense = await getActiveLicense(keyRecord.CompanyId);
+    if (!activeLicense) {
+      return res.status(403).json({
+        activated: false,
+        error_code: "license_inactive",
+        error_message: "No active license found for this company",
+      });
+    }
+
+    const tenantId = company.TenantId || requestedTenantId || `tnt_${keyRecord.CompanyId}`;
+    const expiresAt = new Date(activeLicense.ExpiryDate).toISOString();
+    const tokenPayload = {
+      type: "sync-agent",
+      company_id: keyRecord.CompanyId,
+      tenant_id: tenantId,
+      api_key_id: keyRecord.Id,
+      device_id: machineFingerprint || null,
+      agent_version: agentVersion || null,
+    };
+    const accessToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: "12h" });
+    const refreshToken = jwt.sign({ ...tokenPayload, token_kind: "refresh" }, JWT_SECRET, { expiresIn: "30d" });
+
+    await touchApiKey(keyRecord.Id, req);
+
+    res.json({
+      activated: true,
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      expires_at: expiresAt,
+      config_version: 1,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      activated: false,
+      error_code: "activation_error",
+      error_message: err.message,
+    });
+  }
+});
+
+agentRouter.post("/heartbeat", authenticateAgent, async (req: any, res) => {
+  try {
+    const activeLicense = await getActiveLicense(req.agent.CompanyId);
+    const status = activeLicense ? "Valid" : "Disabled";
+    const expiresAt = activeLicense?.ExpiryDate ? new Date(activeLicense.ExpiryDate).toISOString() : null;
+
+    if (req.agent.ApiKeyId) {
+      await touchApiKey(req.agent.ApiKeyId, req);
+    }
+
+    res.json({
+      license_status: status,
+      expires_at: expiresAt,
+      config_version: 1,
+      commands: [],
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      license_status: "Unknown",
+      error_code: "heartbeat_error",
+      error_message: err.message,
+    });
+  }
+});
+
+agentRouter.get("/config", authenticateAgent, async (req: any, res) => {
+  res.json(toAgentConfig(req.agent.TenantId || `tnt_${req.agent.CompanyId}`));
+});
+
+agentRouter.get("/jobs", authenticateAgent, async (req: any, res) => {
+  const limit = Math.max(1, Math.min(Number.parseInt(String(req.query.limit || "25"), 10) || 25, 200));
+  const companyId = req.agent.CompanyId;
+
+  try {
+    const pendingItems = await db("SyncQueue")
+      .select("Id", "DocumentType", "ExternalId", "DocumentDate", "Payload", "QueuedAt")
+      .where({ CompanyId: companyId, Status: 0 })
+      .orderBy("Priority", "desc")
+      .orderBy("QueuedAt", "asc")
+      .limit(limit);
+
+    if (pendingItems.length > 0) {
+      await db("SyncQueue")
+        .whereIn("Id", pendingItems.map((item: any) => item.Id))
+        .update({
+          Status: 3,
+          ProcessingStartedAt: new Date().toISOString(),
+        });
+    }
+
+    res.json({
+      jobs: pendingItems.map((item: any) => ({
+        job_id: String(item.Id),
+        tenant_id: req.agent.TenantId || `tnt_${companyId}`,
+        entity_type: "document",
+        operation: "upsert",
+        document_type: item.DocumentType,
+        external_id: item.ExternalId,
+        payload_version: 1,
+        payload_json: typeof item.Payload === "string" ? item.Payload : JSON.stringify(item.Payload),
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+agentRouter.post("/jobs/:jobId/ack", authenticateAgent, async (req: any, res) => {
+  const jobId = req.params.jobId;
+  const statusText = String(req.body?.status || req.body?.Status || "").toLowerCase();
+  const success = ["completed", "complete", "success", "succeeded", "ok", "1"].includes(statusText);
+  const failed = ["failed", "fail", "error", "2"].includes(statusText);
+
+  if (!success && !failed) {
+    return res.status(400).json({ error: "Invalid ack status" });
+  }
+
+  try {
+    const mikro = req.body?.mikro || req.body?.Mikro || {};
+    const updatedRows = await db("SyncQueue")
+      .where({ Id: jobId, CompanyId: req.agent.CompanyId })
+      .update({
+        Status: success ? 1 : 2,
+        LastError: failed ? (req.body?.error || req.body?.Error || "Agent failed") : null,
+        MikroRecno: mikro?.rec_no || mikro?.recNo || mikro?.MikroRecno || null,
+        ...(success ? { CompletedAt: new Date().toISOString() } : { RetryCount: db.raw("RetryCount + 1") }),
+      });
+
+    if (updatedRows === 0) {
+      return res.status(404).json({ error: "Queue item not found or unauthorized" });
+    }
+
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+agentRouter.post("/bootstrap", authenticateAgent, async (req: any, res) => {
+  res.json({
+    accepted: true,
+    count: Array.isArray(req.body?.items) ? req.body.items.length : 0,
+    pushed_at: new Date().toISOString(),
+  });
+});
+
+agentRouter.post("/data/push", authenticateAgent, async (req: any, res) => {
+  const kind = String(req.body?.kind || req.body?.Kind || "").toLowerCase();
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  const companyId = req.agent.CompanyId;
+
+  try {
+    const normalizedItems = items.map(normalizeAgentDataItem);
+    const now = new Date().toISOString();
+
+    if (["customers", "customer", "cari", "cariler", "carihesaplar"].includes(kind)) {
+      await db.transaction(async (trx) => {
+        for (const item of normalizedItems) {
+          const cari = normalizeCari(item);
+          if (!cari.CariKodu || !cari.CariAdi) continue;
+
+          if (db.client.config.client === "mysql2") {
+            await trx.raw(`
+              INSERT INTO CariHesaplar (CompanyId, CariKodu, CariAdi, VergiDairesi, VergiNumarasi, Bakiye, LastSyncAt)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON DUPLICATE KEY UPDATE
+                CariAdi = VALUES(CariAdi),
+                VergiDairesi = VALUES(VergiDairesi),
+                VergiNumarasi = VALUES(VergiNumarasi),
+                Bakiye = VALUES(Bakiye),
+                LastSyncAt = VALUES(LastSyncAt)
+            `, [companyId, cari.CariKodu, cari.CariAdi, cari.VergiDairesi, cari.VergiNumarasi, cari.Bakiye, now]);
+          } else {
+            await trx.raw(`
+              INSERT INTO "CariHesaplar" ("CompanyId", "CariKodu", "CariAdi", "VergiDairesi", "VergiNumarasi", "Bakiye", "LastSyncAt")
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT("CompanyId", "CariKodu") DO UPDATE SET
+                "CariAdi" = EXCLUDED."CariAdi",
+                "VergiDairesi" = EXCLUDED."VergiDairesi",
+                "VergiNumarasi" = EXCLUDED."VergiNumarasi",
+                "Bakiye" = EXCLUDED."Bakiye",
+                "LastSyncAt" = EXCLUDED."LastSyncAt"
+            `, [companyId, cari.CariKodu, cari.CariAdi, cari.VergiDairesi, cari.VergiNumarasi, cari.Bakiye, now]);
+          }
+        }
+      });
+    }
+
+    if (["stocks", "stock", "stok", "stoklar", "stokkartlar", "prices"].includes(kind)) {
+      await db.transaction(async (trx) => {
+        for (const item of normalizedItems) {
+          const stok = normalizeStok(item);
+          if (!stok.StokKodu || !stok.StokAdi) continue;
+
+          if (db.client.config.client === "mysql2") {
+            await trx.raw(`
+              INSERT INTO StokKartlar (CompanyId, StokKodu, StokAdi, Birim, Barkod, SatisFiyati1, LastSyncAt)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON DUPLICATE KEY UPDATE
+                StokAdi = VALUES(StokAdi),
+                Birim = VALUES(Birim),
+                Barkod = VALUES(Barkod),
+                SatisFiyati1 = VALUES(SatisFiyati1),
+                LastSyncAt = VALUES(LastSyncAt)
+            `, [companyId, stok.StokKodu, stok.StokAdi, stok.Birim, stok.Barkod, stok.SatisFiyati1, now]);
+          } else {
+            await trx.raw(`
+              INSERT INTO "StokKartlar" ("CompanyId", "StokKodu", "StokAdi", "Birim", "Barkod", "SatisFiyati1", "LastSyncAt")
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT("CompanyId", "StokKodu") DO UPDATE SET
+                "StokAdi" = EXCLUDED."StokAdi",
+                "Birim" = EXCLUDED."Birim",
+                "Barkod" = EXCLUDED."Barkod",
+                "SatisFiyati1" = EXCLUDED."SatisFiyati1",
+                "LastSyncAt" = EXCLUDED."LastSyncAt"
+            `, [companyId, stok.StokKodu, stok.StokAdi, stok.Birim, stok.Barkod, stok.SatisFiyati1, now]);
+          }
+        }
+      });
+    }
+
+    res.json({
+      accepted: true,
+      kind,
+      count: items.length,
+      pushed_at: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      accepted: false,
+      kind,
+      count: 0,
+      error: err.message,
+    });
+  }
+});
+
+agentRouter.get("/data/:kind", authenticateAgent, async (req: any, res) => {
+  const kind = String(req.params.kind || "").toLowerCase();
+  const companyId = req.agent.CompanyId;
+  const sinceTimestamp = req.query.sinceTimestamp ? Number.parseInt(String(req.query.sinceTimestamp), 10) : null;
+  const sinceIso = sinceTimestamp ? new Date(sinceTimestamp * 1000).toISOString() : null;
+
+  try {
+    let rows: any[] = [];
+    if (["customers", "customer", "cari", "cariler", "carihesaplar"].includes(kind)) {
+      let query = db("CariHesaplar").where({ CompanyId: companyId });
+      if (sinceIso) query = query.andWhere("LastSyncAt", ">", sinceIso);
+      rows = await query;
+      return res.json({
+        success: true,
+        kind,
+        count: rows.length,
+        items: rows.map((row: any) => ({
+          key: row.CariKodu,
+          payload: row,
+          captured_at: row.LastSyncAt || new Date().toISOString(),
+        })),
+        server_time: new Date().toISOString(),
+      });
+    }
+
+    if (["stocks", "stock", "stok", "stoklar", "stokkartlar", "prices"].includes(kind)) {
+      let query = db("StokKartlar").where({ CompanyId: companyId });
+      if (sinceIso) query = query.andWhere("LastSyncAt", ">", sinceIso);
+      rows = await query;
+      return res.json({
+        success: true,
+        kind,
+        count: rows.length,
+        items: rows.map((row: any) => ({
+          key: row.StokKodu,
+          payload: row,
+          captured_at: row.LastSyncAt || new Date().toISOString(),
+        })),
+        server_time: new Date().toISOString(),
+      });
+    }
+
+    res.json({
+      success: true,
+      kind,
+      count: 0,
+      items: [],
+      server_time: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      kind,
+      count: 0,
+      error: err.message,
+      server_time: new Date().toISOString(),
+    });
+  }
+});
+
+app.use("/agent/v1", agentRouter);
+app.use("/api/agent/v1", agentRouter);
+
 // --- ERP / Windows Sync Service API Routes ---
 
 // 1. Bulk Upsert Cari Hesaplar (Customers) from Windows ERP
 app.post("/api/erp/carihesaplar/bulk", authenticateClient, async (req: any, res: any) => {
   const companyId = req.client.CompanyId;
-  const items = req.body.items; 
+  const items = getBulkItems(req);
 
   if (!Array.isArray(items)) {
-    return res.status(400).json({ error: "Expected 'items' array in body" });
+    return res.status(400).json({ error: "Expected 'items' array in body, or a raw JSON array" });
   }
 
   try {
+    const invalidItems: Array<{ index: number; reason: string }> = [];
+
     await db.transaction(async (trx) => {
-      for (const item of items) {
-        const bakiye = parseFloat(item.Bakiye) || 0.0;
+      for (const [index, item] of items.entries()) {
+        const cari = normalizeCari(item);
+        if (!cari.CariKodu || !cari.CariAdi) {
+          invalidItems.push({ index, reason: "CariKodu/CariAdi missing" });
+          continue;
+        }
+
         const now = new Date().toISOString();
-        const vergiDairesi = item.VergiDairesi || null;
-        const vergiNumarasi = item.VergiNumarasi || null;
 
         if (db.client.config.client === "mysql2") {
           await trx.raw(`
@@ -508,7 +1071,7 @@ app.post("/api/erp/carihesaplar/bulk", authenticateClient, async (req: any, res:
               VergiNumarasi = VALUES(VergiNumarasi),
               Bakiye = VALUES(Bakiye),
               LastSyncAt = VALUES(LastSyncAt)
-          `, [companyId, item.CariKodu, item.CariAdi, vergiDairesi, vergiNumarasi, bakiye, now]);
+          `, [companyId, cari.CariKodu, cari.CariAdi, cari.VergiDairesi, cari.VergiNumarasi, cari.Bakiye, now]);
         } else {
           await trx.raw(`
             INSERT INTO "CariHesaplar" ("CompanyId", "CariKodu", "CariAdi", "VergiDairesi", "VergiNumarasi", "Bakiye", "LastSyncAt")
@@ -519,12 +1082,17 @@ app.post("/api/erp/carihesaplar/bulk", authenticateClient, async (req: any, res:
               "VergiNumarasi" = EXCLUDED."VergiNumarasi",
               "Bakiye" = EXCLUDED."Bakiye",
               "LastSyncAt" = EXCLUDED."LastSyncAt"
-          `, [companyId, item.CariKodu, item.CariAdi, vergiDairesi, vergiNumarasi, bakiye, now]);
+          `, [companyId, cari.CariKodu, cari.CariAdi, cari.VergiDairesi, cari.VergiNumarasi, cari.Bakiye, now]);
         }
       }
     });
 
-    res.json({ success: true, processedCount: items.length });
+    res.json({
+      success: invalidItems.length === 0,
+      processedCount: items.length - invalidItems.length,
+      skippedCount: invalidItems.length,
+      ...(invalidItems.length > 0 ? { invalidItems: invalidItems.slice(0, 20) } : {}),
+    });
   } catch (err: any) {
     console.error("Bulk cari error:", err);
     res.status(500).json({ error: err.message });
@@ -534,19 +1102,24 @@ app.post("/api/erp/carihesaplar/bulk", authenticateClient, async (req: any, res:
 // 2. Bulk Upsert Stok Kartları (Products) from Windows ERP
 app.post("/api/erp/stokkartlar/bulk", authenticateClient, async (req: any, res: any) => {
   const companyId = req.client.CompanyId;
-  const items = req.body.items; 
+  const items = getBulkItems(req);
 
   if (!Array.isArray(items)) {
-    return res.status(400).json({ error: "Expected 'items' array in body" });
+    return res.status(400).json({ error: "Expected 'items' array in body, or a raw JSON array" });
   }
 
   try {
+    const invalidItems: Array<{ index: number; reason: string }> = [];
+
     await db.transaction(async (trx) => {
-      for (const item of items) {
-        const fiyat = parseFloat(item.SatisFiyati1) || 0.0;
+      for (const [index, item] of items.entries()) {
+        const stok = normalizeStok(item);
+        if (!stok.StokKodu || !stok.StokAdi) {
+          invalidItems.push({ index, reason: "StokKodu/StokAdi missing" });
+          continue;
+        }
+
         const now = new Date().toISOString();
-        const birim = item.Birim || null;
-        const barkod = item.Barkod || null;
 
         if (db.client.config.client === "mysql2") {
           await trx.raw(`
@@ -558,7 +1131,7 @@ app.post("/api/erp/stokkartlar/bulk", authenticateClient, async (req: any, res: 
               Barkod = VALUES(Barkod),
               SatisFiyati1 = VALUES(SatisFiyati1),
               LastSyncAt = VALUES(LastSyncAt)
-          `, [companyId, item.StokKodu, item.StokAdi, birim, barkod, fiyat, now]);
+          `, [companyId, stok.StokKodu, stok.StokAdi, stok.Birim, stok.Barkod, stok.SatisFiyati1, now]);
         } else {
           await trx.raw(`
             INSERT INTO "StokKartlar" ("CompanyId", "StokKodu", "StokAdi", "Birim", "Barkod", "SatisFiyati1", "LastSyncAt")
@@ -569,12 +1142,17 @@ app.post("/api/erp/stokkartlar/bulk", authenticateClient, async (req: any, res: 
               "Barkod" = EXCLUDED."Barkod",
               "SatisFiyati1" = EXCLUDED."SatisFiyati1",
               "LastSyncAt" = EXCLUDED."LastSyncAt"
-          `, [companyId, item.StokKodu, item.StokAdi, birim, barkod, fiyat, now]);
+          `, [companyId, stok.StokKodu, stok.StokAdi, stok.Birim, stok.Barkod, stok.SatisFiyati1, now]);
         }
       }
     });
 
-    res.json({ success: true, processedCount: items.length });
+    res.json({
+      success: invalidItems.length === 0,
+      processedCount: items.length - invalidItems.length,
+      skippedCount: invalidItems.length,
+      ...(invalidItems.length > 0 ? { invalidItems: invalidItems.slice(0, 20) } : {}),
+    });
   } catch (err: any) {
     console.error("Bulk stok error:", err);
     res.status(500).json({ error: err.message });

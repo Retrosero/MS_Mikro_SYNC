@@ -39,6 +39,17 @@ export const db = knex({
   useNullAsDefault: dbClient === "better-sqlite3"
 });
 
+async function ensureColumn(
+  tableName: string,
+  columnName: string,
+  addColumn: (table: knex.Knex.CreateTableBuilder) => void
+) {
+  if (!await db.schema.hasColumn(tableName, columnName)) {
+    await db.schema.alterTable(tableName, addColumn);
+    console.log(`Column '${columnName}' added to existing '${tableName}' table.`);
+  }
+}
+
 export async function initializeSchema() {
   console.log(`Initializing schema for database client: ${dbClient}...`);
 
@@ -60,12 +71,7 @@ export async function initializeSchema() {
     console.log("Table 'Companies' created.");
   } else {
     // If table exists, check and add TenantId column
-    if (!await db.schema.hasColumn("Companies", "TenantId")) {
-      await db.schema.alterTable("Companies", (table) => {
-        table.string("TenantId").nullable();
-      });
-      console.log("Column 'TenantId' added to existing 'Companies' table.");
-    }
+    await ensureColumn("Companies", "TenantId", (table) => table.string("TenantId").nullable());
   }
 
   // Check Licenses table
@@ -108,6 +114,11 @@ export async function initializeSchema() {
       table.text("Permissions").nullable();
     });
     console.log("Table 'ApiKeys' created.");
+  } else {
+    await ensureColumn("ApiKeys", "LastUsedAt", (table) => table.string("LastUsedAt").nullable());
+    await ensureColumn("ApiKeys", "LastUsedIp", (table) => table.string("LastUsedIp").nullable());
+    await ensureColumn("ApiKeys", "RequestCount", (table) => table.integer("RequestCount").notNullable().defaultTo(0));
+    await ensureColumn("ApiKeys", "Permissions", (table) => table.text("Permissions").nullable());
   }
 
   // Check ErrorLogs table
@@ -130,6 +141,11 @@ export async function initializeSchema() {
       table.string("ResolvedBy").nullable();
     });
     console.log("Table 'ErrorLogs' created.");
+  } else {
+    await ensureColumn("ErrorLogs", "CorrelationId", (table) => table.string("CorrelationId").nullable());
+    await ensureColumn("ErrorLogs", "EventType", (table) => table.string("EventType").nullable());
+    await ensureColumn("ErrorLogs", "ResolvedAt", (table) => table.string("ResolvedAt").nullable());
+    await ensureColumn("ErrorLogs", "ResolvedBy", (table) => table.string("ResolvedBy").nullable());
   }
 
   // Check SyncQueue table
@@ -158,6 +174,17 @@ export async function initializeSchema() {
       table.unique(["CompanyId", "ExternalId"]);
     });
     console.log("Table 'SyncQueue' created.");
+  } else {
+    await ensureColumn("SyncQueue", "DocumentNumber", (table) => table.string("DocumentNumber").nullable());
+    await ensureColumn("SyncQueue", "RetryCount", (table) => table.integer("RetryCount").notNullable().defaultTo(0));
+    await ensureColumn("SyncQueue", "MaxRetries", (table) => table.integer("MaxRetries").notNullable().defaultTo(3));
+    await ensureColumn("SyncQueue", "LastError", (table) => table.text("LastError").nullable());
+    await ensureColumn("SyncQueue", "MikroRecno", (table) => table.integer("MikroRecno").nullable());
+    await ensureColumn("SyncQueue", "Priority", (table) => table.integer("Priority").notNullable().defaultTo(0));
+    await ensureColumn("SyncQueue", "ProcessingStartedAt", (table) => table.string("ProcessingStartedAt").nullable());
+    await ensureColumn("SyncQueue", "CompletedAt", (table) => table.string("CompletedAt").nullable());
+    await ensureColumn("SyncQueue", "DeviceId", (table) => table.string("DeviceId").nullable());
+    await ensureColumn("SyncQueue", "UserId", (table) => table.string("UserId").nullable());
   }
 
   // Check CariHesaplar table
@@ -176,6 +203,11 @@ export async function initializeSchema() {
       table.unique(["CompanyId", "CariKodu"]);
     });
     console.log("Table 'CariHesaplar' created.");
+  } else {
+    await ensureColumn("CariHesaplar", "VergiDairesi", (table) => table.string("VergiDairesi").nullable());
+    await ensureColumn("CariHesaplar", "VergiNumarasi", (table) => table.string("VergiNumarasi").nullable());
+    await ensureColumn("CariHesaplar", "Bakiye", (table) => table.float("Bakiye").notNullable().defaultTo(0.0));
+    await ensureColumn("CariHesaplar", "LastSyncAt", (table) => table.string("LastSyncAt").nullable());
   }
 
   // Check StokKartlar table
@@ -194,6 +226,11 @@ export async function initializeSchema() {
       table.unique(["CompanyId", "StokKodu"]);
     });
     console.log("Table 'StokKartlar' created.");
+  } else {
+    await ensureColumn("StokKartlar", "Birim", (table) => table.string("Birim").nullable());
+    await ensureColumn("StokKartlar", "Barkod", (table) => table.string("Barkod").nullable());
+    await ensureColumn("StokKartlar", "SatisFiyati1", (table) => table.float("SatisFiyati1").notNullable().defaultTo(0.0));
+    await ensureColumn("StokKartlar", "LastSyncAt", (table) => table.string("LastSyncAt").nullable());
   }
 
   // Insert default company
